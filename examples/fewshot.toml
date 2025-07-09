@@ -1,18 +1,12 @@
 # Dataset paths - maps dataset names to their directories
 [datasets]
-example = "/home/aadduri/state/examples" # CHANGE THIS TO YOUR DIRECTORY
+  vcc = "/scratch/saigum/stateExperiments/train"    # ← your real test folder
 
-# Training specifications
-# All cell types in a dataset automatically go into training (excluding zeroshot/fewshot overrides)
 [training]
-example = "train"
+  vcc = "train"
 
-# Zeroshot specifications - entire cell types go to val or test
 [zeroshot]
 
-# Fewshot specifications - explicit perturbation lists
-[fewshot]
-
-[fewshot."example.CT4"]
-val = ["TARGET3"]
-test = ["TARGET4", "TARGET5"]  # can overlap with val
+[fewshot."vcc.h1_ESC"]
+val = ['CHMP3', 'AKT2', 'SHPRH', 'TMSB4X', 'KLF10', 'TARBP2', 'KDM2B', 'SV2A', 'CLDN6', 'TCF3', 'ANTXR1', 'NDUFB6', 'TADA1', 'MED12', 'CAMSAP2', 'IDE', 'PRCP', 'WFS1', 'FOXH1', 'SMARCA4', 'TWF2', 'SAFB', 'POLB', 'TSC22D4', 'ACVR1B', 'PMS1', 'NISCH', 'INSIG1', 'DHCR24', 'MAP3K7', 'TMSB10', 'SMARCA5', 'STAG2', 'ZNF426', 'DNMT1', 'SSBP1']
+test = ['SH3BP4', 'ZNF581', 'ANXA6', 'PACSIN3', 'MGST1', 'IGF1R', 'ITGAV', 'SLIRP', 'CTSV', 'MTFR1', 'KLHDC2', 'SMARCB1', 'PAXIP1', 'KRT18', 'EHMT1', 'HMGXB4', 'CSK', 'DOT1L', 'MAT2A', 'CENPB', 'TUSC3', 'USF2', 'HDAC8', 'CXCL12', 'THY1', 'GSTZ1', 'COX4I1', 'ACLY', 'COX6C', 'ARPC2', 'UQCRB', 'NFE2L1', 'VCL', 'HTATSF1', 'HMGCR', 'JMJD8', 'JAZF1', 'GNG12', 'DPH2', 'STRAP', 'PPP2R3C', 'SMARCE1', 'HDAC3', 'TCF7L2', 'SUPV3L1', 'EIF3H', 'FUBP1', 'WAC', 'ZNF598', 'MAX']
