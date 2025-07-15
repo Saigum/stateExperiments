@@ -9,7 +9,7 @@ def add_arguments_infer(parser: argparse.ArgumentParser):
         help="Path to model checkpoint (.ckpt). If not provided, will use model_dir/checkpoints/final.ckpt",
     )
     parser.add_argument("--adata", type=str, required=True, help="Path to input AnnData file (.h5ad)")
-    parser.add_argument("--embed_key", type=str, default="X_hvg", help="Key in adata.obsm for input features")
+    parser.add_argument("--embed_key", type=str, default=None, help="Key in adata.obsm for input features")
     parser.add_argument(
         "--pert_col", type=str, default="drugname_drugconc", help="Column in adata.obs for perturbation labels"
     )
@@ -100,7 +100,10 @@ def run_tx_infer(args):
         X = adata.obsm[args.embed_key]
         logger.info(f"Using adata.obsm['{args.embed_key}'] as input features: shape {X.shape}")
     else:
-        X = adata.X
+        try:
+            X = adata.X.toarray()
+        except:
+            X = adata.X
         logger.info(f"Using adata.X as input features: shape {X.shape}")
 
     # Prepare perturbation tensor using the data module's mapping
@@ -224,11 +227,10 @@ def run_tx_infer(args):
     preds_np = np.concatenate(all_preds, axis=0)
 
     # Save predictions to AnnData
-    pred_key = "model_preds"
-    adata.obsm[pred_key] = preds_np
+    adata.X = preds_np
     output_path = args.output or args.adata.replace(".h5ad", "_with_preds.h5ad")
     adata.write_h5ad(output_path)
-    logger.info(f"Saved predictions to {output_path} (in adata.obsm['{pred_key}'])")
+    logger.info(f"Saved predictions to {output_path} (in adata.X)")
 
 
 def main():

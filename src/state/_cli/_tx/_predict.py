@@ -207,8 +207,8 @@ def run_tx_predict(args: ap.ArgumentParser):
     logger.info("Generating predictions on test set using manual loop...")
     device = next(model.parameters()).device
 
-    final_preds = np.empty((num_cells, output_dim), dtype=np.float16)
-    final_reals = np.empty((num_cells, output_dim), dtype=np.float16)
+    final_preds = np.empty((num_cells, output_dim), dtype=np.float32)
+    final_reals = np.empty((num_cells, output_dim), dtype=np.float32)
 
     store_raw_expression = (
         data_module.embed_key is not None
@@ -221,11 +221,11 @@ def run_tx_predict(args: ap.ArgumentParser):
     if store_raw_expression:
         # Preallocate matrices of shape (num_cells, gene_dim) for decoded predictions.
         if cfg["data"]["kwargs"]["output_space"] == "gene":
-            final_X_hvg = np.empty((num_cells, hvg_dim), dtype=np.float16)
-            final_pert_cell_counts_preds = np.empty((num_cells, hvg_dim), dtype=np.float16)
+            final_X_hvg = np.empty((num_cells, hvg_dim), dtype=np.float32)
+            final_pert_cell_counts_preds = np.empty((num_cells, hvg_dim), dtype=np.float32)
         if cfg["data"]["kwargs"]["output_space"] == "all":
-            final_X_hvg = np.empty((num_cells, gene_dim), dtype=np.float16)
-            final_pert_cell_counts_preds = np.empty((num_cells, gene_dim), dtype=np.float16)
+            final_X_hvg = np.empty((num_cells, gene_dim), dtype=np.float32)
+            final_pert_cell_counts_preds = np.empty((num_cells, gene_dim), dtype=np.float32)
 
     current_idx = 0
 
@@ -272,8 +272,8 @@ def run_tx_predict(args: ap.ArgumentParser):
             else:
                 all_gem_groups.append(str(batch_preds["batch"]))
 
-            batch_pred_np = batch_preds["preds"].cpu().numpy().astype(np.float16)
-            batch_real_np = batch_preds["pert_cell_emb"].cpu().numpy().astype(np.float16)
+            batch_pred_np = batch_preds["preds"].cpu().numpy().astype(np.float32)
+            batch_real_np = batch_preds["pert_cell_emb"].cpu().numpy().astype(np.float32)
             batch_size = batch_pred_np.shape[0]
             final_preds[current_idx : current_idx + batch_size, :] = batch_pred_np
             final_reals[current_idx : current_idx + batch_size, :] = batch_real_np
@@ -281,12 +281,12 @@ def run_tx_predict(args: ap.ArgumentParser):
 
             # Handle X_hvg for HVG space ground truth
             if final_X_hvg is not None:
-                batch_real_gene_np = batch_preds["pert_cell_counts"].cpu().numpy().astype(np.float16)
+                batch_real_gene_np = batch_preds["pert_cell_counts"].cpu().numpy().astype(np.float32)
                 final_X_hvg[current_idx - batch_size : current_idx, :] = batch_real_gene_np
 
             # Handle decoded gene predictions if available
             if final_pert_cell_counts_preds is not None:
-                batch_gene_pred_np = batch_preds["pert_cell_counts_preds"].cpu().numpy().astype(np.float16)
+                batch_gene_pred_np = batch_preds["pert_cell_counts_preds"].cpu().numpy().astype(np.float32)
                 final_pert_cell_counts_preds[current_idx - batch_size : current_idx, :] = batch_gene_pred_np
 
     logger.info("Creating anndatas from predictions from manual loop...")

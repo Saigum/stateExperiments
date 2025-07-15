@@ -94,7 +94,7 @@ class Inference:
             raise ValueError("Model already initialized")
 
         # Load and initialize model for eval
-        self.model = StateEmbeddingModel.load_from_checkpoint(checkpoint, strict=False)
+        self.model = StateEmbeddingModel.load_from_checkpoint(checkpoint, dropout=0.0, strict=False)
         all_pe = self.protein_embeds or get_embeddings(self._vci_conf)
         if isinstance(all_pe, dict):
             all_pe = torch.vstack(list(all_pe.values()))

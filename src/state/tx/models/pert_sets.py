@@ -144,6 +144,7 @@ class PertSetsPerturbationModel(PerturbationModel):
 
         # Save or store relevant hyperparams
         self.predict_residual = predict_residual
+        self.output_space = output_space
         self.n_encoder_layers = kwargs.get("n_encoder_layers", 2)
         self.n_decoder_layers = kwargs.get("n_decoder_layers", 2)
         self.activation_class = get_activation_class(kwargs.get("activation", "gelu"))
@@ -174,6 +175,8 @@ class PertSetsPerturbationModel(PerturbationModel):
             self.loss_fn = SamplesLoss(loss="sinkhorn", blur=blur)
         else:
             raise ValueError(f"Unknown loss function: {loss_name}")
+
+        self.use_basal_projection = kwargs.get("use_basal_projection", True)
 
         # Build the underlying neural OT network
         self._build_networks()
@@ -266,7 +269,17 @@ class PertSetsPerturbationModel(PerturbationModel):
         )
 
         # Simple linear layer that maintains the input dimension
-        self.basal_encoder = nn.Linear(self.input_dim, self.hidden_dim)
+        if self.use_basal_projection:
+            self.basal_encoder = build_mlp(
+                in_dim=self.input_dim,
+                out_dim=self.hidden_dim,
+                hidden_dim=self.hidden_dim,
+                n_layers=self.n_encoder_layers,
+                dropout=self.dropout,
+                activation=self.activation_class,
+            )
+        else:
+            self.basal_encoder = nn.Linear(self.input_dim, self.hidden_dim)
 
         self.transformer_backbone, self.transformer_model_dim = get_transformer_backbone(
             self.transformer_backbone_key,
@@ -285,11 +298,12 @@ class PertSetsPerturbationModel(PerturbationModel):
             activation=self.activation_class,
         )
 
-        self.final_down_then_up = nn.Sequential(
-            nn.Linear(self.output_dim, self.output_dim // 8),
-            nn.GELU(),
-            nn.Linear(self.output_dim // 8, self.output_dim),
-        )
+        if self.output_space == 'all':
+            self.final_down_then_up = nn.Sequential(
+                nn.Linear(self.output_dim, self.output_dim // 8),
+                nn.GELU(),
+                nn.Linear(self.output_dim // 8, self.output_dim),
+            )
 
     def encode_perturbation(self, pert: torch.Tensor) -> torch.Tensor:
         """If needed, define how we embed the raw perturbation input."""
@@ -376,12 +390,14 @@ class PertSetsPerturbationModel(PerturbationModel):
             res_pred = transformer_output
 
         # add to basal if predicting residual
-        if self.predict_residual:
+        if self.predict_residual and self.output_space == "all":
             # Project control_cells to hidden_dim space to match res_pred
             # control_cells_hidden = self.project_to_hidden(control_cells)
             # treat the actual prediction as a residual sum to basal
             out_pred = self.project_out(res_pred) + basal
             out_pred = self.final_down_then_up(out_pred)
+        elif self.predict_residual:
+            out_pred = self.project_out(res_pred + control_cells)
         else:
             out_pred = self.project_out(res_pred)
 

@@ -4,6 +4,7 @@ import argparse as ap
 def add_arguments_transform(parser: ap.ArgumentParser):
     """Add arguments for state embedding CLI."""
     parser.add_argument("--model-folder", required=True, help="Path to the model checkpoint folder")
+    parser.add_argument("--checkpoint", required=False, help="Path to the specific model checkpoint")
     parser.add_argument("--input", required=True, help="Path to input anndata file (h5ad)")
     parser.add_argument("--output", required=True, help="Path to output embedded anndata file (h5ad)")
     parser.add_argument("--embed-key", default="X_state", help="Name of key to store embeddings")
@@ -30,7 +31,8 @@ def run_emb_transform(args: ap.ArgumentParser):
     if not model_files:
         logger.error(f"No model checkpoint found in {args.model_folder}")
         raise FileNotFoundError(f"No model checkpoint found in {args.model_folder}")
-    args.checkpoint = model_files[0]
+    if not args.checkpoint:
+        args.checkpoint = model_files[-1]
     logger.info(f"Using model checkpoint: {args.checkpoint}")
 
     # Create inference object
