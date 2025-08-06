@@ -14,6 +14,7 @@ from .decoders import FinetuneVCICountsDecoder
 from .decoders_nb import NBDecoder, nb_nll
 from .utils import build_mlp, get_activation_class, get_transformer_backbone
 
+from torch_geometric.nn import GravNetConv
 
 logger = logging.getLogger(__name__)
 
@@ -639,3 +640,144 @@ class StateTransitionPerturbationModel(PerturbationModel):
             output_dict["pert_cell_counts_preds"] = pert_cell_counts_preds
 
         return output_dict
+    
+    
+class GraphStateTransitionModel(StateTransitionPerturbationModel):
+    def __init__(self, input_dim, hidden_dim, output_dim, pert_dim, batch_dim = None, predict_residual = True, distributional_loss = "energy", transformer_backbone_key = "GPT2", transformer_backbone_kwargs = None, output_space = "gene", gene_dim = None, **kwargs):
+        super().__init__(input_dim, hidden_dim, output_dim, pert_dim, batch_dim, predict_residual, distributional_loss, transformer_backbone_key, transformer_backbone_kwargs, output_space, gene_dim, **kwargs)
+    
+    def _build_networks(self):
+        """
+        Here we instantiate the actual GPT2-based model.
+        """
+        self.pert_encoder = build_mlp(
+            in_dim=self.pert_dim,
+            out_dim=self.hidden_dim,
+            hidden_dim=self.hidden_dim,
+            n_layers=self.n_encoder_layers,
+            dropout=self.dropout,
+            activation=self.activation_class,
+        )
+
+        # Simple linear layer that maintains the input dimension
+        if self.use_basal_projection:
+            self.basal_encoder = build_mlp(
+                in_dim=self.input_dim,
+                out_dim=self.hidden_dim,
+                hidden_dim=self.hidden_dim,
+                n_layers=self.n_encoder_layers,
+                dropout=self.dropout,
+                activation=self.activation_class,
+            )
+        else:
+            self.basal_encoder = nn.Linear(self.input_dim, self.hidden_dim)
+
+        
+        self.cg_encoder = nn.Sequential(nn.Linear(self.hidden_dim,self.hidden_dim),
+                                        GravNetConv(in_channels=self.hidden_dim,
+                                                    out_channels=self.hidden_dim,
+                                                    space_dimensions=4,
+                                                    propagate_dimensions=32,
+                                                    k=5),
+                                        nn.Linear(self.hidden_dim,self.hidden_dim),
+                                        )
+        
+        self.transformer_backbone, self.transformer_model_dim = get_transformer_backbone(
+            self.transformer_backbone_key,
+            self.transformer_backbone_kwargs,
+        )
+
+        # Project from input_dim to hidden_dim for transformer input
+        # self.project_to_hidden = nn.Linear(self.input_dim, self.hidden_dim)
+
+        self.project_out = build_mlp(
+            in_dim=self.hidden_dim,
+            out_dim=self.output_dim,
+            hidden_dim=self.hidden_dim,
+            n_layers=self.n_decoder_layers,
+            dropout=self.dropout,
+            activation=self.activation_class,
+        )
+
+        if self.output_space == 'all':
+            self.final_down_then_up = nn.Sequential(
+                nn.Linear(self.output_dim, self.output_dim // 8),
+                nn.GELU(),
+                nn.Linear(self.output_dim // 8, self.output_dim),
+            )
+
+    def forward(self, batch, padded=True)-> torch.Tensor:
+        if padded:
+            pert = batch["pert_emb"].reshape(-1, self.cell_sentence_len, self.pert_dim)
+            basal = batch["ctrl_cell_emb"].reshape(-1, self.cell_sentence_len, self.input_dim)
+        else:
+            # we are inferencing on a single batch, so accept variable length sentences
+            pert = batch["pert_emb"].reshape(1, -1, self.pert_dim)
+            basal = batch["ctrl_cell_emb"].reshape(1, -1, self.input_dim)
+
+        # Shape: [B, S, input_dim]
+        pert_embedding = self.encode_perturbation(pert)
+        control_cells_pregraphed = self.encode_basal_expression(basal)
+        control_cells =  self.cg_encoder(control_cells_pregraphed)
+        combined_input = pert_embedding + control_cells  # Shape: [B, S, hidden_dim]
+        seq_input = combined_input  # Shape: [B, S, hidden_dim]
+
+        if self.batch_encoder is not None:
+            # Extract batch indices (assume they are integers or convert from one-hot)
+            batch_indices = batch["batch"]
+
+            if batch_indices.dim() > 1 and batch_indices.size(-1) == self.batch_dim:
+                batch_indices = batch_indices.argmax(-1)
+
+            if padded:
+                batch_indices = batch_indices.reshape(-1, self.cell_sentence_len)
+            else:
+                batch_indices = batch_indices.reshape(1, -1)
+
+            batch_embeddings = self.batch_encoder(batch_indices.long())  # Shape: [B, S, hidden_dim]
+            seq_input = seq_input + batch_embeddings
+
+        confidence_pred = None
+        if self.confidence_token is not None:
+            seq_input = self.confidence_token.append_confidence_token(seq_input)
+
+        if self.hparams.get("mask_attn", False):
+            batch_size, seq_length, _ = seq_input.shape
+            device = seq_input.device
+
+            self.transformer_backbone._attn_implementation = "eager"
+
+            base = torch.eye(seq_length, device=device).view(1, seq_length, seq_length)
+
+            attn_mask = base.repeat(batch_size, 1, 1)
+
+            outputs = self.transformer_backbone(inputs_embeds=seq_input, attention_mask=attn_mask)
+            transformer_output = outputs.last_hidden_state
+        else:
+            transformer_output = self.transformer_backbone(inputs_embeds=seq_input).last_hidden_state
+
+        if self.confidence_token is not None:
+            res_pred, confidence_pred = self.confidence_token.extract_confidence_prediction(transformer_output)
+        else:
+            res_pred = transformer_output
+
+        if self.predict_residual and self.output_space == "all":
+            out_pred = self.project_out(res_pred) + basal
+            out_pred = self.final_down_then_up(out_pred)
+        elif self.predict_residual:
+            out_pred = self.project_out(res_pred + control_cells)
+        else:
+            out_pred = self.project_out(res_pred)
+
+        is_gene_space = self.hparams["embed_key"] == "X_hvg" or self.hparams["embed_key"] is None
+        # logger.info(f"DEBUG: is_gene_space: {is_gene_space}")
+        # logger.info(f"DEBUG: self.gene_decoder: {self.gene_decoder}")
+        if is_gene_space or self.gene_decoder is None:
+            out_pred = self.relu(out_pred)
+
+        output = out_pred.reshape(-1, self.output_dim)
+
+        if confidence_pred is not None:
+            return output, confidence_pred
+        else:
+            return output
