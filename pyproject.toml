@@ -1,6 +1,6 @@
 [project]
 name = "arc-state"
-version = "0.9.12"
+version = "0.9.13"
 description = "State is a machine learning model that predicts cellular perturbation response across diverse contexts."
 readme = "README.md"
 authors = [
@@ -34,9 +34,8 @@ vectordb = [
     "lancedb>=0.24.0"
 ]
 
-
 [dependency-groups]
-dev = ["ruff>=0.11.11", "vulture>=2.14"]
+dev = ["ruff>=0.11.11", "vulture>=2.14", "ipython>=8.37.0"]
 
 [build-system]
 requires = ["hatchling"]

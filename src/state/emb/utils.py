@@ -95,11 +95,11 @@ def is_valid_uuid(val):
 
 
 def get_embedding_cfg(cfg):
-    return cfg.embeddings[cfg.embeddings.current]
+    return cfg['embeddings'][cfg['embeddings']['current']]
 
 
 def get_dataset_cfg(cfg):
-    return cfg.dataset[cfg.dataset.current]
+    return cfg['dataset'][cfg['dataset']['current']]
 
 
 def get_precision_config(device_type='cuda'):

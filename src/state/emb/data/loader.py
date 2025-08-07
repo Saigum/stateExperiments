@@ -1,3 +1,4 @@
+from cgi import print_arguments
 import h5py
 import logging
 import torch
@@ -173,7 +174,6 @@ class H5adSentenceDataset(data.Dataset):
     def get_dim(self) -> Dict[str, int]:
         return self.num_genes
 
-
 class FilteredGenesCounts(H5adSentenceDataset):
     def __init__(
         self, cfg, test=False, datasets=None, shape_dict=None, adata=None, adata_name=None, protein_embeds=None, gene_column: str = "gene_name"
@@ -196,7 +196,7 @@ class FilteredGenesCounts(H5adSentenceDataset):
             self.shapes_dict[adata_name] = adata.shape
 
             # compute its embedding‐index vector
-            esm_data = self.protein_embeds or torch.load(emb_cfg.all_embeddings, weights_only=False)
+            esm_data = self.protein_embeds or torch.load(emb_cfg['all_embeddings'], weights_only=False)
             valid_genes_list = list(esm_data.keys())
             # make a gene→global‐index lookup
             global_pos = {g: i for i, g in enumerate(valid_genes_list)}
@@ -215,35 +215,36 @@ class FilteredGenesCounts(H5adSentenceDataset):
             log.info(f"{(new_mapping != -1).sum()} genes mapped to embedding file (out of {len(new_mapping)})")
             self.ds_emb_map[adata_name] = new_mapping
 
-        if utils.get_embedding_cfg(self.cfg).ds_emb_mapping is not None:
-            esm_data = self.protein_embeds or torch.load(emb_cfg.ds_emb_mapping, weights_only=False)
-            valid_genes_list = list(esm_data.keys())
-            for name in self.datasets:
-                if not utils.is_valid_uuid(
-                    name
-                ):  # had to add this in for now as cellxgene h5ad fles don't have gene_name object but tahoe does
-                    if adata is None:
-                        a = self.dataset_file(name)
-                        try:
-                            gene_names = np.array(
-                                [g.decode("utf-8") for g in a[f"/var/{self.gene_column}"][:]]
-                            )  # Decode byte strings
-                        except:
-                            gene_categories = a[f"/var/{self.gene_column}/categories"][:]
-                            gene_codes = np.array(a[f"/var/{self.gene_column}/codes"][:])
-                            gene_names = np.array([g.decode("utf-8") for g in gene_categories[gene_codes]])
-                        valid_mask = np.isin(gene_names, valid_genes_list)
-                        self.valid_gene_index[name] = valid_mask
-                    else:
-                        gene_names = np.array(adata.var_names)
+        print(f"!!! {(self.ds_emb_map[adata_name] != -1).sum()} genes mapped to embedding file (out of {len(self.ds_emb_map[adata_name])})")
+
+        esm_data = self.protein_embeds or torch.load(emb_cfg['all_embeddings'], weights_only=False)
+        valid_genes_list = list(esm_data.keys())
+        for name in self.datasets:
+            if not utils.is_valid_uuid(
+                name
+            ):  # had to add this in for now as cellxgene h5ad fles don't have gene_name object but tahoe does
+                if adata is None:
+                    a = self.dataset_file(name)
+                    try:
+                        gene_names = np.array(
+                            [g.decode("utf-8") for g in a[f"/var/{self.gene_column}"][:]]
+                        )  # Decode byte strings
+                    except:
+                        gene_categories = a[f"/var/{self.gene_column}/categories"][:]
+                        gene_codes = np.array(a[f"/var/{self.gene_column}/codes"][:])
+                        gene_names = np.array([g.decode("utf-8") for g in gene_categories[gene_codes]])
+                    valid_mask = np.isin(gene_names, valid_genes_list)
+                    self.valid_gene_index[name] = valid_mask
+                else:
+                    gene_names = np.array(adata.var_names)
+                    valid_mask = np.isin(gene_names, valid_genes_list)
+
+                    if not valid_mask.any():
+                        # none of the genes were valid, probably ensembl id's
+                        gene_names = adata.var[self.gene_column].values
                         valid_mask = np.isin(gene_names, valid_genes_list)
 
-                        if not valid_mask.any():
-                            # none of the genes were valid, probably ensembl id's
-                            gene_names = adata.var[self.gene_column].values
-                            valid_mask = np.isin(gene_names, valid_genes_list)
-
-                        self.valid_gene_index[name] = valid_mask
+                    self.valid_gene_index[name] = valid_mask
 
     def __getitem__(self, idx):
         counts, idx, dataset, dataset_num = super().__getitem__(idx)
@@ -298,8 +299,6 @@ class VCIDatasetSentenceCollator(object):
             reverse_mapping[ds_emb_idxs[mask]] = local_indices[mask]
             self.global_to_local[dataset_name] = reverse_mapping
 
-        print(len(self.global_to_local))
-
     def __call__(self, batch):
         num_aug = getattr(self.cfg.model, "num_downsample", 1)
         if num_aug > 1 and self.training:
@@ -337,43 +336,11 @@ class VCIDatasetSentenceCollator(object):
             datasets.append(ds_name)
 
         if self.cfg.loss.name == "tabular":
-            if "batch_tabular_loss" in self.__dict__ and self.batch_tabular_loss:
-                # Find genes shared across all datasets
-                shared_mask = None
-                for dataset in datasets:
-                    dataset_mask = self.global_to_local[dataset] >= 0
-                    if shared_mask is None:
-                        shared_mask = dataset_mask
-                    else:
-                        shared_mask &= dataset_mask
-
-                # Get indices of shared genes
-                shared_indices = torch.where(shared_mask)[0]
-
-                # Repeat shared genes to reach size S
-                n_shared = shared_indices.size(0)
-                if n_shared > 0:
-                    # Calculate how many times to repeat and remainder
-                    repeats = self.S // n_shared
-                    remainder = self.S % n_shared
-
-                    # Repeat the full sequence
-                    shared_genes = shared_indices.repeat(repeats)
-
-                    # Add remaining genes needed
-                    if remainder > 0:
-                        shared_genes = torch.cat([shared_genes, shared_indices[:remainder]])
-                else:
-                    # If no shared genes, sample randomly from global gene space
-                    shared_genes = torch.randint(
-                        low=0, high=self.global_size, size=(self.S,), device=masks.device, dtype=torch.long
-                    )
-            else:
-                if "global_size" not in self.__dict__:
-                    self.global_size = utils.get_embedding_cfg(self.cfg).num
-                shared_genes = torch.randint(
-                    low=0, high=self.global_size, size=(self.S,), device=masks.device, dtype=torch.long
-                )
+            if "global_size" not in self.__dict__:
+                self.global_size = utils.get_embedding_cfg(self.cfg).num
+            shared_genes = torch.randint(
+                low=0, high=self.global_size, size=(self.S,), device=masks.device, dtype=torch.long
+            )
         else:
             shared_genes = None
 
@@ -488,37 +455,7 @@ class VCIDatasetSentenceCollator(object):
 
         # store the raw counts here, we need them as targets
         original_counts_raw = counts_raw.clone()
-
-        # if we are using downsample augmentation, decide if we need to update counts_raw
-        num_aug = getattr(self.cfg.model, "num_downsample", 1)
-        if num_aug > 1:
-            if downsample_frac is None:
-                downsample_frac = torch.empty(1).uniform_(0.3, 1.0).item()
-
-            down_umis = int(total_umis * downsample_frac)
-            if down_umis > 0 and downsample_frac < 1.0:
-                # build a distribution over raw counts
-                genes_sampled = torch.multinomial(count_expr_dist.squeeze(), down_umis, replacement=True)
-                # flatten to a 1D gene vector, and get the counts for the newly sampled genes
-                flat = counts_raw.view(-1)
-                counts_aug_flat = torch.zeros_like(flat)
-                counts_aug_flat.scatter_add_(
-                    0,
-                    genes_sampled,
-                    torch.ones(
-                        down_umis,
-                        dtype=counts_aug_flat.dtype,
-                    ),
-                )
-                # restore original shape (1, D)
-                counts_aug = counts_aug_flat.view_as(counts_raw)
-                counts_aug = torch.log1p(counts_aug)
-            else:
-                counts_aug = counts_raw
-
-            # if we are using an augmentation, update the raw counts here
-            counts_raw = counts_aug
-
+    
         # logic to sample a single cell sentence and task sentence here
         ds_emb_idxs = torch.tensor(self.dataset_to_protein_embeddings[dataset], dtype=torch.long)
 
@@ -540,6 +477,7 @@ class VCIDatasetSentenceCollator(object):
                 counts = counts_raw[:, valid_gene_mask]
                 original_counts = original_counts_raw[:, valid_gene_mask]
 
+        # so counts are filtered. wtf is happening with the tabular loss then? and why do we error out?
         if counts.sum() == 0:
             expression_weights = F.softmax(counts, dim=1)
         else:
@@ -589,7 +527,7 @@ class VCIDatasetSentenceCollator(object):
                     torch.randint(len(unexpressed_genes), (remaining_slots,))
                 ]
 
-            cell_sentence_counts[c, :] = 100 * expression_weights[c, cell_sentences[c, :].to(torch.int32)]
+            cell_sentence_counts[c, :] = 100 * expression_weights[c, cell_sentences[c, :].to(torch.long)]
 
             # Convert tokens to Embeddings - local to global
             # this also includes the cls token, but we will override it later with a learnable torch vector
@@ -654,45 +592,6 @@ class VCIDatasetSentenceCollator(object):
             if self.cfg.loss.name == "cross_entropy":
                 # binarize the counts to 0/1
                 task_counts[c] = (task_counts[c] > 0).float()
-
-            # mask out the task genes from the cell sentence
-            task_gene_set = torch.tensor(task_sentence[c].tolist(), dtype=cell_sentences.dtype)
-            potential_mask = torch.isin(cell_sentences[c], task_gene_set)
-
-            # Calculate target number of masked tokens
-            target_mask_count = int(self.cfg.task.mask * self.cfg.dataset.pad_length)
-            current_mask_count = potential_mask.sum().item()
-
-            if current_mask_count > target_mask_count:
-                # Too many tokens are being masked - randomly select subset
-                # Only consider indices after the CLS token (index 0)
-                mask_indices = torch.where(potential_mask[1:])[0] + 1  # +1 to adjust for offset
-                keep_indices = torch.randperm(len(mask_indices))[:target_mask_count]
-                selected_indices = mask_indices[keep_indices]
-
-                # Create new mask with only the selected indices, ensuring CLS is not masked
-                final_mask = torch.zeros_like(potential_mask)
-                final_mask[selected_indices] = True
-                mask[c] = final_mask
-            elif current_mask_count < target_mask_count:
-                # Not enough tokens masked - we need to mask additional tokens
-                non_masked = ~potential_mask
-
-                # Exclude the CLS token (index 0) by only considering indices 1 and up
-                non_masked_indices = torch.where(non_masked[1:])[0] + 1  # +1 to adjust for offset
-
-                # Calculate how many more tokens to mask
-                additional_needed = target_mask_count - current_mask_count
-                additional_needed = min(additional_needed, len(non_masked_indices))
-
-                if len(non_masked_indices) > 0 and additional_needed > 0:
-                    additional_indices = non_masked_indices[torch.randperm(len(non_masked_indices))[:additional_needed]]
-                    potential_mask[additional_indices] = True
-
-                mask[c] = potential_mask
-            else:
-                # Exactly self.cfg.task.mask percent are masked, use the potential mask as is
-                mask[c] = potential_mask
 
             # make sure that the CLS token is never masked out.
             mask[c, 0] = False

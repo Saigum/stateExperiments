@@ -96,6 +96,10 @@ class Inference:
         # Load and initialize model for eval
         self.model = StateEmbeddingModel.load_from_checkpoint(checkpoint, dropout=0.0, strict=False)
         
+        # Ensure model uses the provided config, not the stored one
+        if self._vci_conf is not None:
+            self.model.update_config(self._vci_conf)
+        
         # Convert model to appropriate precision for faster inference
         device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
         precision = get_precision_config(device_type=device_type)
@@ -238,23 +242,23 @@ class Inference:
             cell_embs = adata.obsm[emb_key]
         except:
             cell_embs = adata.X
+            
         device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
         precision = get_precision_config(device_type=device_type)
         cell_embs = torch.Tensor(cell_embs).to(self.model.device, dtype=precision)
 
         use_rda = getattr(self.model.cfg.model, "rda", False)
         if use_rda and read_depth is None:
-            read_depth = 1000.0
+            read_depth = 4.0
 
         gene_embeds = self.get_gene_embedding(genes)
         with torch.autocast(device_type=device_type, dtype=precision):
             for i in tqdm(range(0, cell_embs.size(0), batch_size), total=int(cell_embs.size(0) // batch_size)):
                 cell_embeds_batch = cell_embs[i : i + batch_size]
-                if use_rda:
-                    task_counts = torch.full((cell_embeds_batch.shape[0],), read_depth, device=self.model.device, dtype=precision)
-                else:
-                    task_counts = None
-                merged_embs = StateEmbeddingModel.resize_batch(cell_embeds_batch, gene_embeds, task_counts)
+                task_counts = torch.full((cell_embeds_batch.shape[0],), read_depth, device=self.model.device, dtype=precision)
+
+                ds_emb = cell_embeds_batch[:, -self.model.z_dim_ds:] # last ten columns are the dataset embeddings
+                merged_embs = StateEmbeddingModel.resize_batch(cell_embeds_batch, gene_embeds, task_counts=task_counts, ds_emb=ds_emb)
                 logprobs_batch = self.model.binary_decoder(merged_embs)
                 logprobs_batch = logprobs_batch.detach().cpu().float().numpy()
                 yield logprobs_batch.squeeze()

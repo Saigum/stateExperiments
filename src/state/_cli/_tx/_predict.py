@@ -146,16 +146,16 @@ def run_tx_predict(args: ap.ArgumentParser):
         from ...tx.models.old_neural_ot import OldNeuralOTPerturbationModel
 
         ModelClass = OldNeuralOTPerturbationModel
-    elif model_class_name.lower() in ["neuralot", "pertsets"]:
+    elif model_class_name.lower() in ["neuralot", "pertsets", "state"]:
         from ...tx.models.state_transition import StateTransitionPerturbationModel
 
         ModelClass = StateTransitionPerturbationModel
 
-    elif model_class_name.lower() == "globalsimplesum":
+    elif model_class_name.lower() in ["globalsimplesum", "perturb_mean"]:
         from ...tx.models.perturb_mean import PerturbMeanPerturbationModel
 
         ModelClass = PerturbMeanPerturbationModel
-    elif model_class_name.lower() == "celltypemean":
+    elif model_class_name.lower() in ["celltypemean", "context_mean"]:
         from ...tx.models.context_mean import ContextMeanPerturbationModel
 
         ModelClass = ContextMeanPerturbationModel

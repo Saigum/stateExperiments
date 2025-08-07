@@ -88,6 +88,14 @@ def main(cfg):
         collater=val_dataset_sentence_collator,
         cfg=cfg,
     )
+    # Ensure model always uses the current config, even after checkpoint loading
+    model.update_config(cfg)
+    # Also update datasets and collaters with current config
+    train_dataset.cfg = cfg
+    val_dataset.cfg = cfg
+    train_dataset_sentence_collator.cfg = cfg
+    val_dataset_sentence_collator.cfg = cfg
+    model.collater = val_dataset_sentence_collator
     model = model.cuda()
     all_pe = get_embeddings(cfg)
     all_pe.requires_grad = False
